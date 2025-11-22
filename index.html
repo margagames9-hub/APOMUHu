@@ -1,65 +1,360 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="tr">
 <head>
-<meta charset="UTF-8">
-<title>Catch The Stars</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>Catch The Stars — Mobil Kontroller</title>
 <style>
-    body { background:#111; margin:0; overflow:hidden; }
-    canvas { background:#222; display:block; margin:auto; }
+  :root{
+    --bg:#061021;
+    --panel: rgba(255,255,255,0.04);
+    --accent:#ffd166;
+    --btn:#0ea5a4;
+  }
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;background:var(--bg);color:#eef2ff}
+  .game-wrap{display:flex;flex-direction:column;height:100vh;align-items:center;justify-content:flex-start;padding:env(safe-area-inset-top) 12px 12px;box-sizing:border-box;}
+  header{width:100%;max-width:920px;padding:12px 8px;display:flex;align-items:center;justify-content:space-between}
+  header h1{font-size:18px;margin:0;color:var(--accent)}
+  .score-box{font-weight:700;font-size:16px;opacity:0.95}
+  .canvas-area{flex:1;display:flex;align-items:center;justify-content:center;width:100%;max-width:920px;padding:8px;box-sizing:border-box}
+  canvas{width:100%;height:auto;max-height:75vh;border-radius:12px;background:linear-gradient(180deg,#071428, #0b1b2b);display:block;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+  .controls{
+    width:100%;max-width:920px;margin-top:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;
+  }
+  .btn-touch{
+    user-select:none;
+    -webkit-user-select:none;
+    -webkit-tap-highlight-color: transparent;
+    background:var(--panel);
+    border-radius:12px;
+    padding:10px;
+    flex:1;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    gap:10px;
+    min-height:64px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+  }
+  .big{
+    padding:14px;border-radius:18px;font-weight:800;font-size:16px;background:linear-gradient(90deg,var(--btn),#1fb6b0);color:#031617;border:none;box-shadow:0 8px 20px rgba(14,165,164,0.12)
+  }
+  .split{
+    display:flex;gap:12px;width:100%;
+  }
+  .half{flex:1;display:flex;gap:12px}
+  .small-note{font-size:12px;color:#9fb2c8;margin-top:8px;text-align:center}
+  .footer{font-size:12px;color:#94a3b8;margin-top:6px}
+  /* large touch arrows */
+  .arrow {font-size:22px;mix-blend-mode:screen}
+  /* pause/resume */
+  .mini-btn{background:var(--panel);padding:8px;border-radius:10px;font-weight:700}
+  @media(min-width:700px){
+    .controls{max-width:780px}
+    canvas{max-height:64vh}
+  }
 </style>
 </head>
 <body>
-<canvas id="game" width="400" height="600"></canvas>
+  <div class="game-wrap">
+    <header>
+      <h1>Catch The Stars</h1>
+      <div class="score-box" id="scoreBox">Score: 0</div>
+    </header>
+
+    <div class="canvas-area">
+      <canvas id="gameCanvas" width="420" height="700" aria-label="Catch the stars game"></canvas>
+    </div>
+
+    <div class="controls" aria-hidden="false">
+      <div class="split">
+        <div class="btn-touch half" id="leftBtn" role="button" aria-pressed="false" tabindex="0">
+          <div style="text-align:center;width:100%"><div class="arrow">⬅</div><div style="font-size:12px;margin-top:4px">SOL</div></div>
+        </div>
+
+        <div class="btn-touch half" id="rightBtn" role="button" aria-pressed="false" tabindex="0">
+          <div style="text-align:center;width:100%"><div class="arrow">➡</div><div style="font-size:12px;margin-top:4px">SAĞ</div></div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:8px;min-width:110px;align-items:flex-end;">
+        <button id="pauseBtn" class="mini-btn" aria-label="Pause">PAUSE</button>
+        <button id="restartBtn" class="big" aria-label="Restart">YENİ OYUN</button>
+      </div>
+    </div>
+
+    <div class="small-note">Dokunma: sol/sağ buton. Klavye: ← / →. Oyun mobil için optimize edildi.</div>
+    <div class="footer">Hazırlayan: ChatGPT • Kaydet: oyun-mobil.html</div>
+  </div>
+
 <script>
-const c = document.getElementById("game");
-const ctx = c.getContext("2d");
+/* ====== Oyun Mantığı (Responsive & Touch) ====== */
+(function(){
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
 
-let player = { x:180, y:550, w:40, h:40, speed:6 };
-let stars = [];
-let score = 0;
+  // logical resolution (keeps physics consistent)
+  const W = 420, H = 700;
+  // scale canvas to fit width while preserving aspect ratio
+  function fitCanvas(){
+    const container = canvas.parentElement;
+    const cw = container.clientWidth;
+    const scale = Math.min(1, cw / W);
+    canvas.style.width = Math.floor(W * scale) + 'px';
+    canvas.style.height = Math.floor(H * scale) + 'px';
+  }
+  window.addEventListener('resize', fitCanvas);
+  fitCanvas();
 
-document.addEventListener("keydown", e=>{
-    if(e.key==="ArrowLeft") player.x -= player.speed;
-    if(e.key==="ArrowRight") player.x += player.speed;
-});
+  // Game state
+  let player = { x: W/2 - 28, y: H - 80, w:56, h:28, speed:6, vx:0 };
+  let stars = [];
+  let score = 0;
+  let running = true;
+  let spawnInterval = 900; // ms
+  let lastSpawn = 0;
+  let lastTime = 0;
+  let difficultyTimer = 0;
 
-function spawnStar(){
-    stars.push({ x: Math.random()*360, y: -20, r: 10, speed: 3+Math.random()*2 });
-}
+  // Controls
+  let leftPressed = false, rightPressed = false;
+  const leftBtn = document.getElementById('leftBtn');
+  const rightBtn = document.getElementById('rightBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
+  const restartBtn = document.getElementById('restartBtn');
+  const scoreBox = document.getElementById('scoreBox');
 
-function loop(){
-    ctx.clearRect(0,0,400,600);
+  // Utility
+  function rand(min,max){ return Math.random()*(max-min)+min; }
 
-    // Player
-    ctx.fillStyle = "cyan";
-    ctx.fillRect(player.x, player.y, player.w, player.h);
-
-    // Stars
-    ctx.fillStyle = "yellow";
-    stars.forEach((s,i)=>{
-        s.y += s.speed;
-        ctx.beginPath();
-        ctx.arc(s.x,s.y,s.r,0,Math.PI*2);
-        ctx.fill();
-
-        // Collision
-        if(s.x > player.x && s.x < player.x+player.w &&
-           s.y > player.y && s.y < player.y+player.h){
-            stars.splice(i,1);
-            score++;
-        }
+  // Spawn star object
+  function spawnStar(){
+    const size = rand(8,16);
+    stars.push({
+      x: rand(size, W-size),
+      y: -size,
+      r: size,
+      vy: rand(2.6, 5.2) + score*0.02,
+      vx: rand(-0.5,0.5),
+      angle: rand(0, Math.PI*2),
+      spin: rand(-0.08, 0.08),
+      color: ['#ffd166','#ff7a18','#7c3aed','#06b6d4','#34d399'][Math.floor(rand(0,5))]
     });
+  }
 
-    // Score
-    ctx.fillStyle="white";
-    ctx.font="20px Arial";
-    ctx.fillText("Score: "+score, 10, 25);
+  // Resize-aware drawing helpers
+  function drawRoundedRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y,x+w,y+h,r);
+    ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r);
+    ctx.arcTo(x,y,x+w,y,r);
+    ctx.closePath();
+    ctx.fill();
+  }
 
+  function update(dt){
+    if(!running) return;
+
+    // Player movement
+    if(leftPressed) player.vx = -player.speed;
+    else if(rightPressed) player.vx = player.speed;
+    else player.vx = 0;
+
+    player.x += player.vx;
+    // clamp
+    if(player.x < 6) player.x = 6;
+    if(player.x + player.w > W-6) player.x = W - player.w - 6;
+
+    // spawn logic
+    lastSpawn += dt;
+    difficultyTimer += dt;
+    if(lastSpawn > spawnInterval){
+      spawnStar();
+      lastSpawn = 0;
+      // slight randomness
+      if(Math.random() < 0.1) lastSpawn = -rand(60,200);
+    }
+
+    // increase difficulty every 12s
+    if(difficultyTimer > 12000){
+      difficultyTimer = 0;
+      spawnInterval = Math.max(320, spawnInterval - 90);
+    }
+
+    // update stars
+    for(let i = stars.length-1; i>=0; i--){
+      const s = stars[i];
+      s.y += s.vy;
+      s.x += s.vx;
+      s.angle += s.spin;
+
+      // out of screen
+      if(s.y - s.r > H + 30){
+        stars.splice(i,1);
+        // optionally penalize? for now no penalty
+        continue;
+      }
+
+      // collision AABB approximate
+      if(s.x > player.x - s.r && s.x < player.x + player.w + s.r &&
+         s.y > player.y - s.r && s.y < player.y + player.h + s.r){
+        stars.splice(i,1);
+        score += 1;
+        // small visual/sound feedback
+        flash();
+      }
+    }
+    // update score display
+    scoreBox.textContent = 'Score: ' + score;
+  }
+
+  // simple flash effect (screen pulse)
+  let flashAlpha = 0;
+  function flash(){ flashAlpha = 0.35; }
+
+  function render(){
+    // clear with gradient
+    const g = ctx.createLinearGradient(0,0,0,H);
+    g.addColorStop(0,'#071428'); g.addColorStop(1,'#041523');
+    ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+
+    // stars (behind)
+    for(const s of stars){
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(s.angle);
+      ctx.beginPath();
+      ctx.fillStyle = s.color;
+      ctx.arc(0,0,s.r,0,Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // player
+    ctx.save();
+    // player shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(player.x+4, player.y+8, player.w, player.h/2);
+    ctx.fillStyle = '#34d399';
+    drawRoundedRect(player.x, player.y, player.w, player.h, 8);
+    ctx.fillStyle = '#012'; // stripe
+    ctx.fillRect(player.x+8, player.y+6, player.w-16, 6);
+    ctx.restore();
+
+    // HUD: score already updated textually, but draw small top-left badge
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(8,8,110,28);
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px system-ui, Arial';
+    ctx.fillText('Score: ' + score, 14, 28);
+
+    // flash overlay
+    if(flashAlpha > 0){
+      ctx.fillStyle = 'rgba(255,240,200,'+flashAlpha+')';
+      ctx.fillRect(0,0,W,H);
+      flashAlpha *= 0.86;
+      if(flashAlpha < 0.01) flashAlpha = 0;
+    }
+  }
+
+  // main loop
+  function loop(ts){
+    if(!lastTime) lastTime = ts;
+    const dt = ts - lastTime;
+    lastTime = ts;
+
+    update(dt);
+    render();
     requestAnimationFrame(loop);
-}
+  }
 
-setInterval(spawnStar, 800);
-loop();
+  // start
+  requestAnimationFrame(loop);
+
+  /* ===== Touch & Pointer Controls ===== */
+  function setBtnState(el, val){
+    el.setAttribute('aria-pressed', val ? 'true' : 'false');
+    el.style.opacity = val ? '0.95' : '1';
+  }
+
+  // pointer-friendly so it works on mobile and mouse
+  function attachHold(el, onStart, onEnd){
+    let holding = false;
+    el.addEventListener('pointerdown', e=>{
+      e.preventDefault();
+      holding = true;
+      el.setPointerCapture(e.pointerId);
+      onStart();
+      setBtnState(el, true);
+    });
+    el.addEventListener('pointerup', e=>{ if(holding){ holding=false; onEnd(); setBtnState(el,false);} });
+    el.addEventListener('pointercancel', e=>{ if(holding){ holding=false; onEnd(); setBtnState(el,false);} });
+    el.addEventListener('pointerleave', e=>{ if(holding){ holding=false; onEnd(); setBtnState(el,false);} });
+    // keyboard accessibility
+    el.addEventListener('keydown', e=>{
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); onStart(); setBtnState(el,true); }
+    });
+    el.addEventListener('keyup', e=>{
+      if(e.key === 'Enter' || e.key === ' '){ e.preventDefault(); onEnd(); setBtnState(el,false); }
+    });
+  }
+
+  attachHold(leftBtn, ()=>{ leftPressed = true; }, ()=>{ leftPressed = false; });
+  attachHold(rightBtn, ()=>{ rightPressed = true; }, ()=>{ rightPressed = false; });
+
+  // keyboard support
+  window.addEventListener('keydown', e=>{
+    if(e.key === 'ArrowLeft'){ leftPressed = true; }
+    if(e.key === 'ArrowRight'){ rightPressed = true; }
+  });
+  window.addEventListener('keyup', e=>{
+    if(e.key === 'ArrowLeft'){ leftPressed = false; }
+    if(e.key === 'ArrowRight'){ rightPressed = false; }
+  });
+
+  /* ===== Pause / Restart Logic ===== */
+  pauseBtn.addEventListener('click', ()=>{
+    running = !running;
+    pauseBtn.textContent = running ? 'PAUSE' : 'DEVAM';
+  });
+
+  restartBtn.addEventListener('click', ()=>{
+    // reset state
+    stars = [];
+    score = 0;
+    player.x = W/2 - player.w/2;
+    spawnInterval = 900;
+    lastSpawn = 0; difficultyTimer = 0;
+    running = true;
+    pauseBtn.textContent = 'PAUSE';
+    scoreBox.textContent = 'Score: 0';
+  });
+
+  /* ===== auto-spawn with dynamic spawnInterval using timers ===== */
+  // We used lastSpawn/dt in update; ensure we spawn if many frames skipped
+  (function spawnTick(){
+    setInterval(()=>{
+      if(running){
+        // spawn occasionally to keep game lively if none present
+        if(stars.length < 4 && Math.random() > 0.3) spawnStar();
+      }
+    }, 1400);
+  })();
+
+  // Accessibility: allow double-tap canvas to pause/resume
+  let lastTap = 0;
+  canvas.addEventListener('pointerdown', (e)=>{
+    const now = Date.now();
+    if(now - lastTap < 350){ running = !running; pauseBtn.textContent = running ? 'PAUSE' : 'DEVAM'; }
+    lastTap = now;
+  });
+
+  // initial pre-spawn
+  for(let i=0;i<6;i++) spawnStar();
+
+})();
 </script>
 </body>
 </html>
